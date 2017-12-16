@@ -2,8 +2,91 @@ import numpy as np
 from sklearn.utils import shuffle as skshuffle
 from sklearn.metrics import roc_auc_score
 from inspect import getmembers, isfunction
+import scipy.stats as st
 
 # Some Utilities
+def eval_embeddings(model, X_test, n_e, k, n_sample=1000, X_lit_s_ori=None, X_lit_o_ori=None, X_lit_img=None, X_lit_txt=None):
+    """
+    Compute Mean Reciprocal Rank and Hits@k score of embedding model.
+    The procedure follows Bordes, et. al., 2011.
+
+    Params:
+    -------
+    model: kga.Model
+        Embedding model to be evaluated.
+
+    X_test: M x 3 matrix, where M is data size
+        Contains M test triplets.
+
+    n_e: int
+        Number of entities in dataset.
+
+    k: int or list
+        Max rank to be considered, i.e. to be used in Hits@k metric.
+
+    n_sample: int, default: 1000
+        Number of negative entities to be considered. These n_sample negative
+        samples are randomly picked w/o replacement from [0, n_e). Consider
+        setting this to get the (fast) approximation of mrr and hits@k.
+
+    X_lit: n_e x n_l matrix
+        Matrix containing all literals for all entities.
+
+
+    Returns:
+    --------
+    mrr: float
+        Mean Reciprocal Rank.
+
+    hitsk: float or list
+        Hits@k.
+    """
+    M = X_test.shape[0]
+
+    X_corr_h = np.copy(X_test)
+    X_corr_t = np.copy(X_test)
+
+    N = n_sample+1 if n_sample is not None else n_e+1
+
+    scores_h = np.zeros([M, N])
+    scores_t = np.zeros([M, N])
+
+    # Gather scores for correct entities
+    y = model.predict(X_test).ravel()
+    scores_h[:, 0] = y
+    scores_t[:, 0] = y
+
+    if n_sample is not None:
+        # Gather scores for some random negative entities
+        ents = np.random.choice(np.arange(n_e), size=n_sample, replace=False)
+    else:
+        ents = np.arange(n_e)
+
+    for i, e in enumerate(ents):
+        idx = i+1  # as i == 0 is for correct triplet score
+
+        X_corr_h[:, 0] = e
+        X_corr_t[:, 2] = e
+
+        y_h = model.predict(X_corr_h).ravel()
+        y_t = model.predict(X_corr_t).ravel()
+
+        scores_h[:, idx] = y_h
+        scores_t[:, idx] = y_t
+
+    ranks_h = np.array([st.rankdata(s)[0] for s in scores_h])
+    ranks_t = np.array([st.rankdata(s)[0] for s in scores_t])
+
+    mrr = (np.mean(1/ranks_h) + np.mean(1/ranks_t)) / 2
+
+    if isinstance(k, list):
+        hitsk = [(np.mean(ranks_h <= r) + np.mean(ranks_t <= r)) / 2 for r in k]
+    else:
+        hitsk = (np.mean(ranks_h <= k) + np.mean(ranks_t <= k)) / 2
+
+    return mrr, hitsk
+
+
 def get_minibatches(X, mb_size, shuffle=True):
     """
     Generate minibatches from given dataset for training.

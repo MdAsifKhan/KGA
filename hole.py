@@ -4,7 +4,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from utils import inherit_docstrings
 import pytorch_fft.fft.autograd as fft
-
+import pdb
 
 class Model(nn.Module):
     """
@@ -239,15 +239,12 @@ class HolE(Model):
             ls = Variable(torch.from_numpy(ls))
             ts = Variable(torch.from_numpy(ts))
 
-        e_hs = self.emb_E(hs).view(-1,1)
-        e_ts = self.emb_E(ts).view(-1,1)
-        e_ls = self.emb_E(ls).view(-1,1)
- 
-        e_hs_real, e_hs_imag = (Variable(self.emb_E(hs).view(-1,1), required_grad=True),
-                Variable(torch.zeros(self.emb_E(hs).size()), required_grad=True))
+        e_hs_real = self.emb_E(hs)
+        e_hs_imag = Variable(torch.zeros(self.emb_E(hs).size()).cuda())
+        e_ts_real = self.emb_E(ts)
+        e_ts_imag = Variable(torch.zeros(self.emb_E(ts).size()).cuda())
+        e_ls = self.emb_E(ls)
 
-        e_ts_real, e_ts_imag = (Variable(self.emb_E(ts).view(-1,1), required_grad=True), 
-                Variable(torch.zeros(self.emb_E(ts).size()), required_grad=True))
         fft_hs = f(e_hs_real, e_hs_imag)
         fft_hs_conj = fft_hs[0], -1*fft_hs[1]
         fft_ts = f(e_ts_real, e_ts_imag)
@@ -255,6 +252,7 @@ class HolE(Model):
         imag_fft = fft_hs_conj[0] * fft_ts[1] + fft_hs_conj[1] * fft_ts[0]      
         
         ccorr = invf(real_fft, imag_fft)[0]
+        pdb.set_trace()
         
 
         f = torch.sum(e_ls*ccorr, 1) 
