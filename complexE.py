@@ -235,9 +235,11 @@ class ComplexE(Model):
         W_imag = self.emb_R_imag(ls)
 
         # Forward
-        score = e_hs_real * W_real * e_ts_real + e_hs_imag * W_real * e_ts_imag + e_hs_real * W_imag * e_ts_imag - e_hs_imag * W_imag * e_ts_real
+        score = torch.sum(e_hs_real * W_real * e_ts_real,1) \
+                + torch.sum(e_hs_imag * W_real * e_ts_imag,1) \
+                 + torch.sum(e_hs_real * W_imag * e_ts_imag,1) \
+                  - torch.sum(e_hs_imag * W_imag * e_ts_real,1)
 
-        f = torch.sum(score, 1)
 
-        return f.view(-1, 1)
+        return score.view(-1, 1)
 
