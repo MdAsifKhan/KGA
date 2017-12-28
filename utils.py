@@ -3,88 +3,69 @@ from sklearn.utils import shuffle as skshuffle
 from sklearn.metrics import roc_auc_score
 from inspect import getmembers, isfunction
 import scipy.stats as st
+import pdb
+import torch
 
 # Some Utilities
-def eval_embeddings(model, X_test, n_e, k, n_sample=1000, X_lit_s_ori=None, X_lit_o_ori=None, X_lit_img=None, X_lit_txt=None):
-    """
-    Compute Mean Reciprocal Rank and Hits@k score of embedding model.
-    The procedure follows Bordes, et. al., 2011.
-
-    Params:
-    -------
-    model: kga.Model
-        Embedding model to be evaluated.
-
-    X_test: M x 3 matrix, where M is data size
-        Contains M test triplets.
-
-    n_e: int
-        Number of entities in dataset.
-
-    k: int or list
-        Max rank to be considered, i.e. to be used in Hits@k metric.
-
-    n_sample: int, default: 1000
-        Number of negative entities to be considered. These n_sample negative
-        samples are randomly picked w/o replacement from [0, n_e). Consider
-        setting this to get the (fast) approximation of mrr and hits@k.
-
-    X_lit: n_e x n_l matrix
-        Matrix containing all literals for all entities.
-
-
-    Returns:
-    --------
-    mrr: float
-        Mean Reciprocal Rank.
-
-    hitsk: float or list
-        Hits@k.
-    """
+def eval_embeddings_vertical(model, X_test, n_e, k, filter_h=None, filter_t=None, n_sample=100, gpu= True):
     M = X_test.shape[0]
 
-    X_corr_h = np.copy(X_test)
-    X_corr_t = np.copy(X_test)
-
-    N = n_sample+1 if n_sample is not None else n_e+1
-
-    scores_h = np.zeros([M, N])
-    scores_t = np.zeros([M, N])
-
-    # Gather scores for correct entities
-    y = model.predict(X_test).ravel()
-    scores_h[:, 0] = y
-    scores_t[:, 0] = y
-
     if n_sample is not None:
-        # Gather scores for some random negative entities
-        ents = np.random.choice(np.arange(n_e), size=n_sample, replace=False)
+        sample_idxs = np.random.randint(M, size=n_sample)
     else:
-        ents = np.arange(n_e)
+        sample_idxs = np.arange(M)
 
-    for i, e in enumerate(ents):
-        idx = i+1  # as i == 0 is for correct triplet score
+    ranks_h = np.zeros(sample_idxs.shape[0], dtype=int)
+    ranks_t = np.zeros(sample_idxs.shape[0], dtype=int)
 
-        X_corr_h[:, 0] = e
-        X_corr_t[:, 2] = e
+    for i, idx in enumerate(sample_idxs):
+        x = X_test[idx]
+        h, t = int(x[0]), int(x[2])
 
-        y_h = model.predict(X_corr_h).ravel()
-        y_t = model.predict(X_corr_t).ravel()
+        x = x.reshape(1, -1)
+        y_h, y_t = model.predict_all(x)
+        # Filtered setting
+        y_h, y_t = y_h.data, y_t.data
+        y_h = y_h.view(y_h.numel())
+        y_t = y_t.view(y_h.numel())
+        true_h, true_t = y_h[h], y_t[t]
 
-        scores_h[:, idx] = y_h
-        scores_t[:, idx] = y_t
+        if filter_h is not None:
+            if gpu:  
+                y_h[torch.LongTensor(filter_h[idx]).cuda()] = np.inf
+            else:
+                y_h[torch.LongTensor(filter_h[idx])] = np.inf                
+        if filter_t is not None:
+            if gpu:  
+                y_t[torch.LongTensor(filter_t[idx]).cuda()] = np.inf
+            else:
+                y_t[torch.LongTensor(filter_t[idx])] = np.inf 
+        y_h[h] = true_h
+        y_t[t] = true_t
 
-    ranks_h = np.array([st.rankdata(s)[0] for s in scores_h])
-    ranks_t = np.array([st.rankdata(s)[0] for s in scores_t])
+        # Do ranking
+        _, ranking_h = torch.sort(y_h)
+        _, ranking_t = torch.sort(y_t)
 
+        ranking_h = ranking_h.cpu().numpy()
+        ranking_t = ranking_t.cpu().numpy()
+
+        ranks_h[i] = np.where(ranking_h == h)[0][0] + 1
+        ranks_t[i] = np.where(ranking_t == t)[0][0] + 1
+
+    # Mean rank
+    mr = (np.mean(ranks_h) + np.mean(ranks_t)) / 2
+
+    # Mean reciprocal rank
     mrr = (np.mean(1/ranks_h) + np.mean(1/ranks_t)) / 2
 
+    # Hits@k
     if isinstance(k, list):
         hitsk = [(np.mean(ranks_h <= r) + np.mean(ranks_t <= r)) / 2 for r in k]
     else:
         hitsk = (np.mean(ranks_h <= k) + np.mean(ranks_t <= k)) / 2
 
-    return mrr, hitsk
+    return mr, mrr, hitsk
 
 
 def get_minibatches(X, mb_size, shuffle=True):
